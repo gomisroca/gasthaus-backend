@@ -18,7 +18,7 @@ type SpeisekarteHandler struct {
 func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	var items []models.SpeisekarteItem
 
-	rows, err := h.DB.Query(context.Background(), "SELECT id, name, description, price, categories, tags, image FROM speisekarte")
+	rows, err := h.DB.Query(context.Background(), "SELECT id, name, description, price, categories, tags, image, seasonal FROM speisekarte")
 	if err != nil {
 		log.Printf("Database query failed: %v", err)
 		http.Error(w, "Database query failed", http.StatusInternalServerError)
@@ -36,6 +36,7 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 			&item.Categories,
 			&item.Tags,
 			&item.Image,
+			&item.Seasonal,
 		); err != nil {
 			log.Printf("Row scan failed: %v", err)
 			continue
