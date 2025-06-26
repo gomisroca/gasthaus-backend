@@ -6,17 +6,10 @@ import (
 	"os"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/joho/godotenv"
 )
 
 
 func SetupDB() (*pgxpool.Pool, error) {
-	// Load environment variables from .env file
-	err := godotenv.Load("../.env")
-    if err != nil {
-        fmt.Println("Error loading .env file")
-    }	
-	
 	connString := os.Getenv("DATABASE_URL")
 	if connString == "" {
 		return nil, fmt.Errorf("DATABASE_URL not set in environment")

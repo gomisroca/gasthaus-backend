@@ -13,13 +13,20 @@ import (
 	"github.com/gomisroca/gasthaus-backend/internal"
 	"github.com/gomisroca/gasthaus-backend/routes"
 	"github.com/gorilla/mux"
+	"github.com/joho/godotenv"
 )
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Health check successful!\n")
 }
 
-func main() { 
+func main() { 	
+	// Load environment variables from .env file
+	err := godotenv.Load("../.env")
+    if err != nil {
+        fmt.Println("Error loading .env file")
+    }	
+
 	internal.RunMigrations()
 	
 	dbpool, err := internal.SetupDB()
