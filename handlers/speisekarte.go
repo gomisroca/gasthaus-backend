@@ -17,10 +17,9 @@ type SpeisekarteHandler struct {
 	DB *pgxpool.Pool
 }
 
-func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
-	var items []models.SpeisekarteItem
+func (h *SpeisekarteHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
+	rows, err := h.DB.Query(context.Background(), "SELECT DISTINCT unnest(categories) AS category FROM speisekarte")
 
-	rows, err := h.DB.Query(context.Background(), "SELECT id, name, description, price, categories, tags, image, seasonal FROM speisekarte")
 	if err != nil {
 		log.Printf("Database query failed: %v", err)
 		http.Error(w, "Database query failed", http.StatusInternalServerError)
@@ -28,6 +27,38 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
+	var categories []string
+	for rows.Next() {
+		var category string
+		if err := rows.Scan(&category); err != nil {
+			log.Printf("Row scan failed: %v", err)
+			continue
+		}
+		categories = append(categories, category)
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(categories)
+}
+
+func (h *SpeisekarteHandler) GetItemsByCategory(w http.ResponseWriter, r *http.Request) {
+	category := r.URL.Query().Get("category")
+	if category == "" {
+		http.Error(w, "Category query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	rows, err := h.DB.Query(context.Background(),
+		`SELECT id, name, description, price, categories, tags, image, seasonal
+		 FROM speisekarte WHERE $1 = ANY(categories)`, category)
+	if err != nil {
+		log.Printf("Database query failed: %v", err)
+		http.Error(w, "Database query failed", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var items []models.SpeisekarteItem
 	for rows.Next() {
 		var item models.SpeisekarteItem
 		if err := rows.Scan(
@@ -49,7 +80,6 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(items)
 }
-
 
 func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	var item models.SpeisekarteItem
