@@ -1,10 +1,18 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
+	"os"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/gomisroca/gasthaus-backend/models"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"golang.org/x/crypto/bcrypt"
 )
 
 
@@ -12,28 +20,67 @@ type AuthHandler struct {
 	DB *pgxpool.Pool
 }
 
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type loginResponse struct {
+	Token string `json:"token"`
+}
 
 func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
-	id := r.FormValue("id")
-	pwd := r.FormValue("password")
-	
-	if id == "" {
-		http.Error(w, "ID is required", http.StatusBadRequest)
+	var req loginRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	if pwd == "" {
-		http.Error(w, "Password is required", http.StatusBadRequest)
+
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "Email and password are required", http.StatusBadRequest)
 		return
 	}
-	// Here we would typically check the credentials against a database or other storage
-	// For this example, we will just check against hardcoded values
-	// In a real application, you would have a salted hash for the password and check it securely
-	if id != "admin" || pwd != "secret" {
-		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+
+	// Look up user by email
+	var user models.User
+	err := h.DB.QueryRow(
+		context.Background(),
+		"SELECT id, email, password_hash FROM users WHERE email=$1",
+		req.Email,
+	).Scan(&user.ID, &user.Email, &user.PasswordHash)
+	if err != nil {
+		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
 		return
 	}
-	// If the credentials are valid, we can proceed with the login
-	fmt.Fprintf(w, "Login successful!\n")
+
+	// Compare password
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
+		return
+	}
+
+	// Generate JWT
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"user_id": user.ID,
+		"email":   user.Email,
+		"exp":     time.Now().Add(24 * time.Hour).Unix(),
+	})
+
+	secret := os.Getenv("JWT_SECRET")
+	if secret == "" {
+		log.Println("JWT_SECRET not set in environment")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	tokenString, err := token.SignedString([]byte(secret))
+	if err != nil {
+		log.Printf("Error signing token: %v", err)
+		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(loginResponse{Token: tokenString})
 }
 
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
