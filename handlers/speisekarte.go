@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/gomisroca/gasthaus-backend/models"
-	"github.com/google/uuid"
+	"github.com/gorilla/mux"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -61,23 +61,13 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// Generate a new UUID for the item
-	newID, err := uuid.NewRandom()
-	if err != nil {
-		log.Printf("Failed to generate UUID: %v", err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	item.ID = newID.String()
-
 	query := `
-		INSERT INTO speisekarte (id, name, description, price, categories, tags, image, seasonal)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		INSERT INTO speisekarte (name, description, price, categories, tags, image, seasonal)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 	`
-	_, err = h.DB.Exec(
+	_, err := h.DB.Exec(
 		context.Background(),
 		query,
-		item.ID,
 		item.Name,
 		item.Description,
 		item.Price,
@@ -96,14 +86,85 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": item.ID})
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
+	vars := mux.Vars(r)
+	id := vars["id"]
+	if id == "" {
+		http.Error(w, "Missing item ID", http.StatusBadRequest)
+		return
+	}
+
+	var updatedItem models.SpeisekarteItem
+	if err := json.NewDecoder(r.Body).Decode(&updatedItem); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	query := `
+		UPDATE speisekarte
+		SET name = $1,
+			description = $2,
+			price = $3,
+			categories = $4,
+			tags = $5,
+			image = $6,
+			seasonal = $7
+		WHERE id = $8
+		RETURNING id;
+	`
+
+	var returnedID string
+	err := h.DB.QueryRow(
+		context.Background(),
+		query,
+		updatedItem.Name,
+		updatedItem.Description,
+		updatedItem.Price,
+		updatedItem.Categories,
+		updatedItem.Tags,
+		updatedItem.Image,
+		updatedItem.Seasonal,
+		id,
+	).Scan(&returnedID)
+	
+	if err != nil {
+		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
+			http.Error(w, "Item with this name already exists", http.StatusConflict)
+			return
+		}
+		log.Printf("Failed to update item: %v", err)
+		http.Error(w, "Failed to update item", http.StatusInternalServerError)
+		return
+	}
+
+	
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *SpeisekarteHandler) DeleteItem(w http.ResponseWriter, r *http.Request) {
-	// TODO: Implement
+	vars := mux.Vars(r)
+	id := vars["id"]
+	if id == "" {
+		http.Error(w, "Missing item ID", http.StatusBadRequest)
+		return
+	}
+
+	cmdTag, err := h.DB.Exec(context.Background(),
+		`DELETE FROM speisekarte WHERE id = $1`, id)
+	if err != nil {
+		log.Printf("Failed to delete item: %v", err)
+		http.Error(w, "Failed to delete item", http.StatusInternalServerError)
+		return
+	}
+
+	
+	if cmdTag.RowsAffected() == 0 {
+		http.Error(w, "Item not found", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
