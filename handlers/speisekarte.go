@@ -8,6 +8,7 @@ import (
 
 	"github.com/gomisroca/gasthaus-backend/models"
 	"github.com/gorilla/mux"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -41,16 +42,23 @@ func (h *SpeisekarteHandler) GetCategories(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(categories)
 }
 
-func (h *SpeisekarteHandler) GetItemsByCategory(w http.ResponseWriter, r *http.Request) {
+func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	category := r.URL.Query().Get("category")
-	if category == "" {
-		http.Error(w, "Category query parameter is required", http.StatusBadRequest)
-		return
-	}
 
-	rows, err := h.DB.Query(context.Background(),
-		`SELECT id, name, description, price, categories, tags, image, seasonal
-		 FROM speisekarte WHERE $1 = ANY(categories)`, category)
+	var rows pgx.Rows
+	var err error
+
+	if category == "" {
+		// Fetch all items
+		rows, err = h.DB.Query(context.Background(),
+			`SELECT id, name, description, price, categories, tags, image, seasonal FROM speisekarte`)
+	} else {
+		// Fetch items filtered by category
+		rows, err = h.DB.Query(context.Background(),
+			`SELECT id, name, description, price, categories, tags, image, seasonal
+			 FROM speisekarte WHERE $1 = ANY(categories)`, category)
+	}
+	
 	if err != nil {
 		log.Printf("Database query failed: %v", err)
 		http.Error(w, "Database query failed", http.StatusInternalServerError)
