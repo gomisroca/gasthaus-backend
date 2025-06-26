@@ -14,6 +14,7 @@ import (
 	"github.com/gomisroca/gasthaus-backend/routes"
 	"github.com/gorilla/mux"
 	"github.com/joho/godotenv"
+	"github.com/rs/cors"
 )
 
 func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
@@ -45,10 +46,20 @@ func main() {
 	routes.RegisterAuthRoutes(r, dbpool)
 	routes.RegisterSpeisekarteRoutes(r, dbpool)
 
+	// CORS setup
+  	c := cors.New(cors.Options{
+        AllowedOrigins:   []string{os.Getenv("FRONTEND_ORIGIN")},
+        AllowCredentials: true,
+        AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+        AllowedHeaders:   []string{"Authorization", "Content-Type"},
+    })
+
+	handler := c.Handler(r)
+
 	// Create http.Server with your router and config
 	srv := &http.Server{
 		Addr:    ":8080",
-		Handler: r,
+		Handler: handler,
 	}
 
 	// Channel to listen for interrupt or terminate signal from OS
