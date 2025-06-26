@@ -20,6 +20,8 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() { 
+	internal.RunMigrations()
+	
 	dbpool, err := internal.SetupDB()
 	if err != nil {
 		log.Fatalf("Failed to set up DB: %v", err)
