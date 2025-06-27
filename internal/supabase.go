@@ -2,12 +2,14 @@ package internal
 
 import (
 	"bytes"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
-	"time"
+
+	"github.com/lucsky/cuid"
 )
 
 func UploadToSupabase(file multipart.File, handler *multipart.FileHeader) (string, error) {
@@ -21,7 +23,11 @@ func UploadToSupabase(file multipart.File, handler *multipart.FileHeader) (strin
 	// Define upload details
 	projectRef := os.Getenv("SUPABASE_PROJECT_REF")
 	bucket := "images"
-	filePath := fmt.Sprintf("uploads/%d_%s", time.Now().Unix(), handler.Filename)
+	c, err := cuid.NewCrypto(rand.Reader)
+    if err != nil {
+        return "", err
+    }
+	filePath := fmt.Sprintf("uploads/%s", c)
 	url := fmt.Sprintf("https://%s.supabase.co/storage/v1/object/%s/%s", projectRef, bucket, filePath)
 
 	// Upload file to Supabase
