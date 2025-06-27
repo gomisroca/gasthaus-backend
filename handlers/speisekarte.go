@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strconv"
 
+	"github.com/gomisroca/gasthaus-backend/internal"
 	"github.com/gomisroca/gasthaus-backend/models"
 	"github.com/gorilla/mux"
 	"github.com/jackc/pgx/v5"
@@ -89,30 +91,62 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(items)
 }
 
-func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
-	var item models.SpeisekarteItem
-
-	// Decode JSON body
-	if err := json.NewDecoder(r.Body).Decode(&item); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {	
+	err := r.ParseMultipartForm(10 << 20) // max 10MB
+	if err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return
 	}
-	defer r.Body.Close()
 
-	query := `
-		INSERT INTO speisekarte (name, description, price, categories, tags, image, seasonal)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-	`
-	_, err := h.DB.Exec(
+	// Read text fields
+	name := r.FormValue("name")
+	description := r.FormValue("description")
+	priceStr := r.FormValue("price")
+	categories := r.Form["categories"] // form array
+	tags := r.Form["tags"]             // form array
+	seasonal := r.FormValue("seasonal") == "true"
+
+	if name == "" || priceStr == "" || len(categories) == 0 {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+	
+	// Parse price
+	price, err := strconv.ParseFloat(priceStr, 64)
+	if err != nil {
+		http.Error(w, "Invalid price", http.StatusBadRequest)
+		return
+	}
+
+	// Handle image
+	file, handler, err := r.FormFile("image")
+	if err != nil {
+		http.Error(w, "Image is required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Upload image to Supabase
+	imageUrl, err := internal.UploadToSupabase(file, handler)
+	if err != nil {
+		log.Printf("Image upload failed: %v", err)
+		http.Error(w, "Image upload failed", http.StatusInternalServerError)
+		return
+	}
+
+	query := `INSERT INTO speisekarte (name, description, price, categories, tags, image, seasonal)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+
+	_, err = h.DB.Exec(
 		context.Background(),
 		query,
-		item.Name,
-		item.Description,
-		item.Price,
-		item.Categories,
-		item.Tags,
-		item.Image,
-		item.Seasonal,
+		name,
+		description,
+		price,
+		categories,
+		tags,
+		imageUrl,
+		seasonal,
 	)
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
