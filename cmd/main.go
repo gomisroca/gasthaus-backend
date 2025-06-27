@@ -21,15 +21,15 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, "Health check successful!\n")
 }
 
-func main() { 	
+func main() {
 	// Load environment variables from .env file
 	err := godotenv.Load("../.env")
-    if err != nil {
-        fmt.Println("Error loading .env file")
-    }	
+	if err != nil {
+		fmt.Println("Error loading .env file")
+	}
 
 	internal.RunMigrations()
-	
+
 	dbpool, err := internal.SetupDB()
 	if err != nil {
 		log.Fatalf("Failed to set up DB: %v", err)
@@ -47,12 +47,12 @@ func main() {
 	routes.RegisterSpeisekarteRoutes(r, dbpool)
 
 	// CORS setup
-  	c := cors.New(cors.Options{
-        AllowedOrigins:   []string{os.Getenv("FRONTEND_ORIGIN")},
-        AllowCredentials: true,
-        AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-        AllowedHeaders:   []string{"Authorization", "Content-Type"},
-    })
+	c := cors.New(cors.Options{
+		AllowedOrigins:   []string{os.Getenv("FRONTEND_ORIGIN")},
+		AllowCredentials: true,
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Authorization", "Content-Type"},
+	})
 
 	handler := c.Handler(r)
 

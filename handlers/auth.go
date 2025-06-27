@@ -15,7 +15,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-
 type AuthHandler struct {
 	DB *pgxpool.Pool
 }

@@ -42,7 +42,7 @@ func JWTAuth(next http.Handler) http.Handler {
 		})
 
 		// If something went wrong with the parsing, return unauthorized
-		if err != nil  || !token.Valid {
+		if err != nil || !token.Valid {
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}

@@ -24,9 +24,9 @@ func UploadToSupabase(file multipart.File, handler *multipart.FileHeader) (strin
 	projectRef := os.Getenv("SUPABASE_PROJECT_REF")
 	bucket := "images"
 	c, err := cuid.NewCrypto(rand.Reader)
-    if err != nil {
-        return "", err
-    }
+	if err != nil {
+		return "", err
+	}
 	filePath := fmt.Sprintf("uploads/%s", c)
 	url := fmt.Sprintf("https://%s.supabase.co/storage/v1/object/%s/%s", projectRef, bucket, filePath)
 

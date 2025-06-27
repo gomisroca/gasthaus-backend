@@ -8,7 +8,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-
 func SetupDB() (*pgxpool.Pool, error) {
 	connString := os.Getenv("DATABASE_URL")
 	if connString == "" {
@@ -18,7 +17,7 @@ func SetupDB() (*pgxpool.Pool, error) {
 	// Database connection setup
 	dbpool, err := pgxpool.New(context.Background(), connString)
 	if err != nil {
-        return nil, fmt.Errorf("unable to connect to database: %v", err)
+		return nil, fmt.Errorf("unable to connect to database: %v", err)
 	}
 
 	return dbpool, nil

@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-
 type SpeisekarteHandler struct {
 	DB *pgxpool.Pool
 }
@@ -60,7 +59,7 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 			`SELECT id, name, description, price, categories, tags, image, seasonal
 			 FROM speisekarte WHERE $1 = ANY(categories)`, category)
 	}
-	
+
 	if err != nil {
 		log.Printf("Database query failed: %v", err)
 		http.Error(w, "Database query failed", http.StatusInternalServerError)
@@ -91,7 +90,7 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(items)
 }
 
-func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {	
+func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	err := r.ParseMultipartForm(10 << 20) // max 10MB
 	if err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
@@ -110,7 +109,7 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
-	
+
 	// Parse price
 	price, err := strconv.ParseFloat(priceStr, 64)
 	if err != nil {
@@ -201,7 +200,7 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		updatedItem.Seasonal,
 		id,
 	).Scan(&returnedID)
-	
+
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
 			http.Error(w, "Item with this name already exists", http.StatusConflict)
@@ -212,7 +211,6 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -232,7 +230,6 @@ func (h *SpeisekarteHandler) DeleteItem(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	
 	if cmdTag.RowsAffected() == 0 {
 		http.Error(w, "Item not found", http.StatusNotFound)
 		return
