@@ -13,7 +13,6 @@ import (
 	"github.com/gomisroca/gasthaus-backend/internal"
 	"github.com/gomisroca/gasthaus-backend/routes"
 	"github.com/gorilla/mux"
-	"github.com/joho/godotenv"
 	"github.com/rs/cors"
 )
 
@@ -23,12 +22,12 @@ func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	// Load environment variables from .env file
-	err := godotenv.Load("../.env")
-	if err != nil {
-		fmt.Println("Error loading .env file")
-	}
+	// err := godotenv.Load("../.env")
+	// if err != nil {
+	// 	fmt.Println("Error loading .env file")
+	// }
 
-	internal.RunMigrations()
+	// internal.RunMigrations()
 
 	dbpool, err := internal.SetupDB()
 	if err != nil {
