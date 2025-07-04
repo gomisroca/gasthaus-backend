@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/gomisroca/gasthaus-backend/internal"
 	"github.com/gomisroca/gasthaus-backend/models"
@@ -15,11 +16,34 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+var (
+   	menuCache     = make(map[string][]models.SpeisekarteItem)
+	cacheTimes    = make(map[string]time.Time) 
+
+	categoriesCache []string
+	categoriesCacheTime time.Time
+    cacheDuration  = 5 * time.Minute
+)
+
 type SpeisekarteHandler struct {
 	DB *pgxpool.Pool
 }
 
+func invalidateCache() {
+	menuCache = make(map[string][]models.SpeisekarteItem)
+	cacheTimes = make(map[string]time.Time)
+	categoriesCache = nil
+	categoriesCacheTime = time.Time{}
+}
+
 func (h *SpeisekarteHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
+	// Look for cached data
+	if time.Since(categoriesCacheTime) < cacheDuration && categoriesCache != nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(categoriesCache)
+		return
+	}
+
 	rows, err := h.DB.Query(context.Background(), "SELECT DISTINCT unnest(categories) AS category FROM speisekarte")
 
 	if err != nil {
@@ -39,12 +63,25 @@ func (h *SpeisekarteHandler) GetCategories(w http.ResponseWriter, r *http.Reques
 		categories = append(categories, category)
 	}
 
+	// Store result in cache
+	categoriesCache = categories
+	categoriesCacheTime = time.Now()
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(categories)
 }
 
 func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	category := r.URL.Query().Get("category")
+
+	// Look for cached data
+	if data, ok := menuCache[category]; ok {
+		if time.Since(cacheTimes[category]) < cacheDuration {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(data)
+			return
+		}
+	}
 
 	var rows pgx.Rows
 	var err error
@@ -86,8 +123,12 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 		items = append(items, item)
 	}
 
+	// Set cache for category
+	menuCache[category] = items
+	cacheTimes[category] = time.Now()
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	json.NewEncoder(w).Encode(menuCache)
 }
 
 func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
@@ -157,6 +198,8 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	invalidateCache()
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -211,6 +254,8 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	invalidateCache()
+	
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -234,6 +279,8 @@ func (h *SpeisekarteHandler) DeleteItem(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Item not found", http.StatusNotFound)
 		return
 	}
+
+	invalidateCache()
 
 	w.WriteHeader(http.StatusOK)
 }
