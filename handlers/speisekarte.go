@@ -71,6 +71,45 @@ func (h *SpeisekarteHandler) GetCategories(w http.ResponseWriter, r *http.Reques
 	json.NewEncoder(w).Encode(categories)
 }
 
+func (h *SpeisekarteHandler) GetUniqueItem(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	id := vars["id"]
+	if id == "" {
+		http.Error(w, "Missing item ID", http.StatusBadRequest)
+		return
+	}
+
+	query := `
+		SELECT id, name, description, price, categories, tags, image, seasonal
+		FROM speisekarte
+		WHERE id = $1
+	`
+
+	var item models.SpeisekarteItem
+	err := h.DB.QueryRow(context.Background(), query, id).Scan(
+		&item.ID,
+		&item.Name,
+		&item.Description,
+		&item.Price,
+		&item.Categories,
+		&item.Tags,
+		&item.Image,
+		&item.Seasonal,
+	)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			http.Error(w, "Item not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("Failed to fetch item: %v", err)
+		http.Error(w, "Failed to fetch item", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(item)
+}
+
 func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	category := r.URL.Query().Get("category")
 
@@ -211,10 +250,43 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var updatedItem models.SpeisekarteItem
-	if err := json.NewDecoder(r.Body).Decode(&updatedItem); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
+	err := r.ParseMultipartForm(10 << 20) // 10 MB
+	if err != nil {
+		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return
+	}
+
+	name := r.FormValue("name")
+	description := r.FormValue("description")
+	priceStr := r.FormValue("price")
+	categories := r.Form["categories"]
+	tags := r.Form["tags"]
+	seasonal := r.FormValue("seasonal") == "true"
+
+	if name == "" || priceStr == "" {
+		http.Error(w, "Missing required fields", http.StatusBadRequest)
+		return
+	}
+
+	price, err := strconv.ParseFloat(priceStr, 64)
+	if err != nil {
+		http.Error(w, "Invalid price", http.StatusBadRequest)
+		return
+	}
+
+	imageURL := r.FormValue("currentImage") // Use current image unless new one is uploaded
+
+	file, handler, err := r.FormFile("image")
+	if err == nil && file != nil {
+		defer file.Close()
+
+		uploadedURL, uploadErr := internal.UploadToSupabase(file, handler)
+		if uploadErr != nil {
+			log.Printf("Image upload failed: %v", uploadErr)
+			http.Error(w, "Image upload failed", http.StatusInternalServerError)
+			return
+		}
+		imageURL = uploadedURL
 	}
 
 	query := `
@@ -231,16 +303,16 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 	`
 
 	var returnedID string
-	err := h.DB.QueryRow(
+	err = h.DB.QueryRow(
 		context.Background(),
 		query,
-		updatedItem.Name,
-		updatedItem.Description,
-		updatedItem.Price,
-		updatedItem.Categories,
-		updatedItem.Tags,
-		updatedItem.Image,
-		updatedItem.Seasonal,
+		name,
+		description,
+		price,
+		categories,
+		tags,
+		imageURL,
+		seasonal,
 		id,
 	).Scan(&returnedID)
 

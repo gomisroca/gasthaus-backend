@@ -16,6 +16,7 @@ func RegisterSpeisekarteRoutes(r *mux.Router, dbpool *pgxpool.Pool) {
 	sr.HandleFunc("/", h.GetItems).Methods("GET")
 	sr.Handle("/", middleware.JWTAuth(http.HandlerFunc(h.AddItem))).Methods("POST")
 	sr.HandleFunc("/categories", h.GetCategories).Methods("GET")
+	sr.HandleFunc("/{id}", h.GetUniqueItem).Methods("GET")
 	sr.Handle("/{id}", middleware.JWTAuth(http.HandlerFunc(h.UpdateItem))).Methods("PUT")
 	sr.Handle("/{id}", middleware.JWTAuth(http.HandlerFunc(h.DeleteItem))).Methods("DELETE")
 }
