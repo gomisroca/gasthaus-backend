@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 RUN apk add --no-cache build-base
 
@@ -19,7 +19,7 @@ COPY --from=builder /app/server .
 
 COPY static ./static
 
-COPY migrations ./migrations
+COPY db/migrations ./migrations
 
 EXPOSE 8080
 
