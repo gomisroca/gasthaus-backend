@@ -80,7 +80,7 @@ func (h *SpeisekarteHandler) GetUniqueItem(w http.ResponseWriter, r *http.Reques
 	}
 
 	query := `
-		SELECT id, name, description, price, categories, tags, image, seasonal
+		SELECT id, name, description, price, categories, ingredients,tags, image, seasonal
 		FROM speisekarte
 		WHERE id = $1
 	`
@@ -92,6 +92,7 @@ func (h *SpeisekarteHandler) GetUniqueItem(w http.ResponseWriter, r *http.Reques
 		&item.Description,
 		&item.Price,
 		&item.Categories,
+		&item.Ingredients,
 		&item.Tags,
 		&item.Image,
 		&item.Seasonal,
@@ -128,11 +129,11 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	if category == "" {
 		// Fetch all items
 		rows, err = h.DB.Query(context.Background(),
-			`SELECT id, name, description, price, categories, tags, image, seasonal FROM speisekarte`)
+			`SELECT id, name, description, price, categories, ingredients, tags, image, seasonal FROM speisekarte`)
 	} else {
 		// Fetch items filtered by category
 		rows, err = h.DB.Query(context.Background(),
-			`SELECT id, name, description, price, categories, tags, image, seasonal
+			`SELECT id, name, description, price, categories, ingredients, tags, image, seasonal
 			 FROM speisekarte WHERE $1 = ANY(categories)`, category)
 	}
 
@@ -152,6 +153,7 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 			&item.Description,
 			&item.Price,
 			&item.Categories,
+			&item.Ingredients,
 			&item.Tags,
 			&item.Image,
 			&item.Seasonal,
@@ -182,6 +184,7 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	description := r.FormValue("description")
 	priceStr := r.FormValue("price")
 	categories := r.Form["categories"] // form array
+	ingredients := r.Form["ingredients"] // form array
 	tags := r.Form["tags"]             // form array
 	seasonal := r.FormValue("seasonal") == "true"
 
@@ -213,8 +216,8 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	query := `INSERT INTO speisekarte (name, description, price, categories, tags, image, seasonal)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`
+	query := `INSERT INTO speisekarte (name, description, price, categories, ingredients, tags, image, seasonal)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	_, err = h.DB.Exec(
 		context.Background(),
@@ -223,6 +226,7 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		description,
 		price,
 		categories,
+		ingredients,
 		tags,
 		imageUrl,
 		seasonal,
@@ -260,6 +264,7 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 	description := r.FormValue("description")
 	priceStr := r.FormValue("price")
 	categories := r.Form["categories"]
+	ingredients := r.Form["ingredients"]
 	tags := r.Form["tags"]
 	seasonal := r.FormValue("seasonal") == "true"
 
@@ -295,10 +300,11 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 			description = $2,
 			price = $3,
 			categories = $4,
-			tags = $5,
-			image = $6,
-			seasonal = $7
-		WHERE id = $8
+			ingredients = $5,
+			tags = $6,
+			image = $7,
+			seasonal = $8
+		WHERE id = $9
 		RETURNING id;
 	`
 
@@ -310,6 +316,7 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		description,
 		price,
 		categories,
+		ingredients,
 		tags,
 		imageURL,
 		seasonal,
