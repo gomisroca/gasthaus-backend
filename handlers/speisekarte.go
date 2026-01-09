@@ -169,7 +169,7 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	cacheTimes[category] = time.Now()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(menuCache)
+	json.NewEncoder(w).Encode(items)
 }
 
 func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
