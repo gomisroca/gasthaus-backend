@@ -13,22 +13,31 @@ import (
 	"github.com/gomisroca/gasthaus-backend/internal"
 	"github.com/gomisroca/gasthaus-backend/routes"
 	"github.com/gorilla/mux"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 	"github.com/rs/cors"
 )
 
-func healthCheckHandler(w http.ResponseWriter, r *http.Request) {
-	fmt.Fprintf(w, "Health check successful!\n")
+func healthCheckHandler(dbpool *pgxpool.Pool) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        if err := dbpool.Ping(r.Context()); err != nil {
+            http.Error(w, "DB unavailable", http.StatusServiceUnavailable)
+            return
+        }
+        w.WriteHeader(http.StatusOK)
+        fmt.Fprintln(w, "OK")
+    }
 }
 
 func main() {
 	// Load environment variables from .env file
-	err := godotenv.Load("../.env")
-	if err != nil {
-		fmt.Println("Error loading .env file")
+	if err := godotenv.Load("../.env"); err != nil {
+		log.Println("Warning: .env file not found, relying on environment variables")
 	}
 
-	internal.RunMigrations()
+	if err := internal.RunMigrations(); err != nil {
+		log.Fatalf("Failed to run migrations: %v", err)
+	}
 
 	dbpool, err := internal.SetupDB()
 	if err != nil {
@@ -41,14 +50,18 @@ func main() {
 
 	fs := http.FileServer(http.Dir("static/"))
 	r.Handle("/static/", http.StripPrefix("/static/", fs))
-
-	r.HandleFunc("/", healthCheckHandler).Methods("GET")
+	r.HandleFunc("/", healthCheckHandler(dbpool)).Methods("GET")
 	routes.RegisterAuthRoutes(r, dbpool)
 	routes.RegisterSpeisekarteRoutes(r, dbpool)
 
 	// CORS setup
+	origin := os.Getenv("FRONTEND_ORIGIN")
+	if origin == "" {
+		log.Fatal("FRONTEND_ORIGIN environment variable is not set")
+	}
+
 	c := cors.New(cors.Options{
-		AllowedOrigins:   []string{os.Getenv("FRONTEND_ORIGIN")},
+		AllowedOrigins:   []string{origin},
 		AllowCredentials: true,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Authorization", "Content-Type"},
@@ -57,9 +70,16 @@ func main() {
 	handler := c.Handler(r)
 
 	// Create http.Server with your router and config
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 	srv := &http.Server{
-		Addr:    ":8080",
-		Handler: handler,
+		Addr: ":" + port,
+		Handler:      handler,
+		ReadTimeout:  10 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
 	}
 
 	// Channel to listen for interrupt or terminate signal from OS
