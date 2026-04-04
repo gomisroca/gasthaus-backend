@@ -17,8 +17,13 @@ func SetupDB() (*pgxpool.Pool, error) {
 	// Database connection setup
 	dbpool, err := pgxpool.New(context.Background(), connString)
 	if err != nil {
-		return nil, fmt.Errorf("unable to connect to database: %v", err)
+		return nil, fmt.Errorf("unable to connect to database: %w", err)
 	}
 
+	if err := dbpool.Ping(context.Background()); err != nil {
+		dbpool.Close()
+		return nil, fmt.Errorf("database unreachable: %w", err)
+	}
+	
 	return dbpool, nil
 }
