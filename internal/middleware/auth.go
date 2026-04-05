@@ -1,53 +1,61 @@
 package middleware
 
 import (
+	"context"
+	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func JWTAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Extract token from request header
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			// Token is not present in the request, return unauthorized
-			http.Error(w, "Authorization header missing", http.StatusUnauthorized)
-			return
-		}
+type contextKey string
 
-		// Check if the token is in the correct format
-		parts := strings.Split(authHeader, " ")
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			http.Error(w, "Invalid authorization header", http.StatusUnauthorized)
-			return
-		}
+const UserIDKey contextKey = "userID"
 
-		tokenStr := parts[1]
-		secret := os.Getenv("JWT_SECRET")
-		if secret == "" {
-			http.Error(w, "JWT_SECRET not set in environment", http.StatusInternalServerError)
-			return
-		}
-
-		// Parse and validate token
-		token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
-			// Check signing method
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, jwt.ErrSignatureInvalid
+func JWTAuth(secret string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader == "" {
+				http.Error(w, "Authorization header missing", http.StatusUnauthorized)
+				return
 			}
-			return []byte(secret), nil
+
+			parts := strings.Split(authHeader, " ")
+			if len(parts) != 2 || parts[0] != "Bearer" {
+				http.Error(w, "Invalid authorization header", http.StatusUnauthorized)
+				return
+			}
+
+			tokenStr := parts[1]
+
+			token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, jwt.ErrSignatureInvalid
+				}
+				return []byte(secret), nil
+			})
+			if err != nil {
+				log.Printf("JWT validation failed: %v", err)
+				http.Error(w, "Invalid token", http.StatusUnauthorized)
+				return
+			}
+
+			claims, ok := token.Claims.(jwt.MapClaims)
+			if !ok {
+				http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+				return
+			}
+
+			userID, ok := claims["sub"].(string)
+			if !ok || userID == "" {
+				http.Error(w, "Invalid token subject", http.StatusUnauthorized)
+				return
+			}
+
+			ctx := context.WithValue(r.Context(), UserIDKey, userID)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
-
-		// If something went wrong with the parsing, return unauthorized
-		if err != nil || !token.Valid {
-			http.Error(w, "Invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		// Token is valid, continue to the next handler
-		next.ServeHTTP(w, r)
-	})
+	}
 }

@@ -1,12 +1,9 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -16,7 +13,8 @@ import (
 )
 
 type AuthHandler struct {
-	DB *pgxpool.Pool
+	DB        *pgxpool.Pool
+	JWTSecret string
 }
 
 type loginRequest struct {
@@ -40,10 +38,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Look up user by email
 	var user models.User
 	err := h.DB.QueryRow(
-		context.Background(),
+		r.Context(),
 		"SELECT id, email, password_hash FROM users WHERE email=$1",
 		req.Email,
 	).Scan(&user.ID, &user.Email, &user.PasswordHash)
@@ -52,54 +49,72 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Compare password
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
 		http.Error(w, "Invalid email or password", http.StatusUnauthorized)
 		return
 	}
 
-	// Generate JWT
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID,
-		"email":   user.Email,
-		"exp":     time.Now().Add(24 * time.Hour).Unix(),
-	})
-
-	secret := os.Getenv("JWT_SECRET")
-	if secret == "" {
-		log.Println("JWT_SECRET not set in environment")
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	tokenString, err := token.SignedString([]byte(secret))
+	tokenString, err := h.mintToken(user.ID, 24*time.Hour)
 	if err != nil {
 		log.Printf("Error signing token: %v", err)
 		http.Error(w, "Failed to generate token", http.StatusInternalServerError)
 		return
 	}
 
-	json.NewEncoder(w).Encode(loginResponse{Token: tokenString})
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(loginResponse{Token: tokenString}); err != nil {
+		log.Printf("Error encoding login response: %v", err)
+	}
 }
 
 func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
-	// This handler would typically handle token refresh logic
-	// For simplicity, we will just demand a token and return a success message
-	token := r.URL.Query().Get("token")
-	if token == "" {
+	tokenStr := r.URL.Query().Get("token")
+	if tokenStr == "" {
 		http.Error(w, "Token is required", http.StatusBadRequest)
 		return
 	}
 
-	// Here you would typically validate the token and refresh it
-	if token != "valid-token" {
+	token, err := jwt.Parse(tokenStr, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, jwt.ErrSignatureInvalid
+		}
+		return []byte(h.JWTSecret), nil
+	})
+	if err != nil {
 		http.Error(w, "Invalid token", http.StatusUnauthorized)
 		return
 	}
 
-	// If the token is valid, we can proceed with the refresh
-	// In a real application, you would generate a new token and return it
-	// For this example, we will just return a new random token
-	newToken := "new-valid-token"
-	fmt.Fprintf(w, "Token refreshed successfully! New token: %s\n", newToken)
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		http.Error(w, "Invalid token claims", http.StatusUnauthorized)
+		return
+	}
+
+	userID, ok := claims["sub"].(string)
+	if !ok || userID == "" {
+		http.Error(w, "Invalid token subject", http.StatusUnauthorized)
+		return
+	}
+
+	newTokenString, err := h.mintToken(userID, 24*time.Hour)
+	if err != nil {
+		log.Printf("Error signing refreshed token: %v", err)
+		http.Error(w, "Failed to refresh token", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(loginResponse{Token: newTokenString}); err != nil {
+		log.Printf("Error encoding refresh response: %v", err)
+	}
+}
+
+func (h *AuthHandler) mintToken(userID string, duration time.Duration) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"sub": userID,
+		"exp": time.Now().Add(duration).Unix(),
+		"iat": time.Now().Unix(),
+	})
+	return token.SignedString([]byte(h.JWTSecret))
 }

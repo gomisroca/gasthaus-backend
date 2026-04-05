@@ -46,13 +46,19 @@ func main() {
 	defer dbpool.Close()
 	fmt.Println("DB connected successfully")
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		log.Fatal("JWT_SECRET environment variable not set")
+	}
+
 	r := mux.NewRouter()
 
 	fs := http.FileServer(http.Dir("static/"))
 	r.Handle("/static/", http.StripPrefix("/static/", fs))
+	
 	r.HandleFunc("/", healthCheckHandler(dbpool)).Methods("GET")
-	routes.RegisterAuthRoutes(r, dbpool)
-	routes.RegisterSpeisekarteRoutes(r, dbpool)
+	routes.RegisterAuthRoutes(r, dbpool, jwtSecret)
+	routes.RegisterSpeisekarteRoutes(r, dbpool, jwtSecret)
 
 	// CORS setup
 	origin := os.Getenv("FRONTEND_ORIGIN")
