@@ -1,11 +1,11 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gomisroca/gasthaus-backend/internal"
@@ -17,12 +17,12 @@ import (
 )
 
 var (
-   	menuCache     = make(map[string][]models.SpeisekarteItem)
-	cacheTimes    = make(map[string]time.Time) 
-
-	categoriesCache []string
+	cacheMu             sync.RWMutex
+	menuCache           = make(map[string][]models.SpeisekarteItem)
+	cacheTimes          = make(map[string]time.Time)
+	categoriesCache     []string
 	categoriesCacheTime time.Time
-    cacheDuration  = 5 * time.Minute
+	cacheDuration       = 5 * time.Minute
 )
 
 type SpeisekarteHandler struct {
@@ -30,6 +30,8 @@ type SpeisekarteHandler struct {
 }
 
 func invalidateCache() {
+	cacheMu.Lock()
+	defer cacheMu.Unlock()
 	menuCache = make(map[string][]models.SpeisekarteItem)
 	cacheTimes = make(map[string]time.Time)
 	categoriesCache = nil
@@ -37,15 +39,20 @@ func invalidateCache() {
 }
 
 func (h *SpeisekarteHandler) GetCategories(w http.ResponseWriter, r *http.Request) {
-	// Look for cached data
-	if time.Since(categoriesCacheTime) < cacheDuration && categoriesCache != nil {
+	cacheMu.RLock()
+	cached := categoriesCache
+	cacheTime := categoriesCacheTime
+	cacheMu.RUnlock()
+
+	if time.Since(cacheTime) < cacheDuration && cached != nil {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(categoriesCache)
+		if err := json.NewEncoder(w).Encode(cached); err != nil {
+			log.Printf("Error encoding categories response: %v", err)
+		}
 		return
 	}
 
-	rows, err := h.DB.Query(context.Background(), "SELECT DISTINCT unnest(categories) AS category FROM speisekarte")
-
+	rows, err := h.DB.Query(r.Context(), "SELECT DISTINCT unnest(categories) AS category FROM speisekarte")
 	if err != nil {
 		log.Printf("Database query failed: %v", err)
 		http.Error(w, "Database query failed", http.StatusInternalServerError)
@@ -62,13 +69,21 @@ func (h *SpeisekarteHandler) GetCategories(w http.ResponseWriter, r *http.Reques
 		}
 		categories = append(categories, category)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("Row iteration error: %v", err)
+		http.Error(w, "Failed to read categories", http.StatusInternalServerError)
+		return
+	}
 
-	// Store result in cache
+	cacheMu.Lock()
 	categoriesCache = categories
 	categoriesCacheTime = time.Now()
+	cacheMu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(categories)
+	if err := json.NewEncoder(w).Encode(categories); err != nil {
+		log.Printf("Error encoding categories response: %v", err)
+	}
 }
 
 func (h *SpeisekarteHandler) GetUniqueItem(w http.ResponseWriter, r *http.Request) {
@@ -80,22 +95,24 @@ func (h *SpeisekarteHandler) GetUniqueItem(w http.ResponseWriter, r *http.Reques
 	}
 
 	query := `
-		SELECT id, name, description, price, categories, ingredients,tags, image, seasonal
+		SELECT id, name, description, price_cents, categories, ingredients, tags, image, seasonal, created_at, updated_at
 		FROM speisekarte
 		WHERE id = $1
 	`
 
 	var item models.SpeisekarteItem
-	err := h.DB.QueryRow(context.Background(), query, id).Scan(
+	err := h.DB.QueryRow(r.Context(), query, id).Scan(
 		&item.ID,
 		&item.Name,
 		&item.Description,
-		&item.Price,
+		&item.PriceCents,
 		&item.Categories,
 		&item.Ingredients,
 		&item.Tags,
 		&item.Image,
 		&item.Seasonal,
+		&item.CreatedAt,
+		&item.UpdatedAt,
 	)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -108,32 +125,37 @@ func (h *SpeisekarteHandler) GetUniqueItem(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(item)
+	if err := json.NewEncoder(w).Encode(item); err != nil {
+		log.Printf("Error encoding item response: %v", err)
+	}
 }
 
 func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 	category := r.URL.Query().Get("category")
 
-	// Look for cached data
-	if data, ok := menuCache[category]; ok {
-		if time.Since(cacheTimes[category]) < cacheDuration {
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(data)
-			return
+	cacheMu.RLock()
+	data, ok := menuCache[category]
+	cacheTime := cacheTimes[category]
+	cacheMu.RUnlock()
+
+	if ok && time.Since(cacheTime) < cacheDuration {
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(data); err != nil {
+			log.Printf("Error encoding items response: %v", err)
 		}
+		return
 	}
 
 	var rows pgx.Rows
 	var err error
 
 	if category == "" {
-		// Fetch all items
-		rows, err = h.DB.Query(context.Background(),
-			`SELECT id, name, description, price, categories, ingredients, tags, image, seasonal FROM speisekarte`)
+		rows, err = h.DB.Query(r.Context(),
+			`SELECT id, name, description, price_cents, categories, ingredients, tags, image, seasonal, created_at, updated_at
+			 FROM speisekarte`)
 	} else {
-		// Fetch items filtered by category
-		rows, err = h.DB.Query(context.Background(),
-			`SELECT id, name, description, price, categories, ingredients, tags, image, seasonal
+		rows, err = h.DB.Query(r.Context(),
+			`SELECT id, name, description, price_cents, categories, ingredients, tags, image, seasonal, created_at, updated_at
 			 FROM speisekarte WHERE $1 = ANY(categories)`, category)
 	}
 
@@ -151,41 +173,49 @@ func (h *SpeisekarteHandler) GetItems(w http.ResponseWriter, r *http.Request) {
 			&item.ID,
 			&item.Name,
 			&item.Description,
-			&item.Price,
+			&item.PriceCents,
 			&item.Categories,
 			&item.Ingredients,
 			&item.Tags,
 			&item.Image,
 			&item.Seasonal,
+			&item.CreatedAt,
+			&item.UpdatedAt,
 		); err != nil {
 			log.Printf("Row scan failed: %v", err)
 			continue
 		}
 		items = append(items, item)
 	}
+	if err := rows.Err(); err != nil {
+		log.Printf("Row iteration error: %v", err)
+		http.Error(w, "Failed to read items", http.StatusInternalServerError)
+		return
+	}
 
-	// Set cache for category
+	cacheMu.Lock()
 	menuCache[category] = items
 	cacheTimes[category] = time.Now()
+	cacheMu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(items)
+	if err := json.NewEncoder(w).Encode(items); err != nil {
+		log.Printf("Error encoding items response: %v", err)
+	}
 }
 
 func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
-	err := r.ParseMultipartForm(10 << 20) // max 10MB
-	if err != nil {
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return
 	}
 
-	// Read text fields
 	name := r.FormValue("name")
 	description := r.FormValue("description")
-	priceStr := r.FormValue("price")
-	categories := r.Form["categories"] // form array
-	ingredients := r.Form["ingredients"] // form array
-	tags := r.Form["tags"]             // form array
+	priceStr := r.FormValue("price_cents")
+	categories := r.Form["categories"]
+	ingredients := r.Form["ingredients"]
+	tags := r.Form["tags"]
 	seasonal := r.FormValue("seasonal") == "true"
 
 	if name == "" || priceStr == "" || len(categories) == 0 {
@@ -193,14 +223,12 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse price
-	price, err := strconv.ParseFloat(priceStr, 64)
-	if err != nil {
+	priceCents, err := strconv.Atoi(priceStr)
+	if err != nil || priceCents < 0 {
 		http.Error(w, "Invalid price", http.StatusBadRequest)
 		return
 	}
 
-	// Handle image
 	file, handler, err := r.FormFile("image")
 	if err != nil {
 		http.Error(w, "Image is required", http.StatusBadRequest)
@@ -208,27 +236,26 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	// Upload image to Supabase
-	imageUrl, err := internal.UploadToSupabase(file, handler)
+	imageURL, err := internal.UploadToSupabase(r.Context(), file, handler)
 	if err != nil {
 		log.Printf("Image upload failed: %v", err)
 		http.Error(w, "Image upload failed", http.StatusInternalServerError)
 		return
 	}
 
-	query := `INSERT INTO speisekarte (name, description, price, categories, ingredients, tags, image, seasonal)
+	query := `INSERT INTO speisekarte (name, description, price_cents, categories, ingredients, tags, image, seasonal)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
 	_, err = h.DB.Exec(
-		context.Background(),
+		r.Context(),
 		query,
 		name,
 		description,
-		price,
+		priceCents,
 		categories,
 		ingredients,
 		tags,
-		imageUrl,
+		imageURL,
 		seasonal,
 	)
 	if err != nil {
@@ -242,8 +269,7 @@ func (h *SpeisekarteHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	invalidateCache()
-
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(http.StatusCreated)
 }
 
 func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) {
@@ -254,15 +280,14 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	err := r.ParseMultipartForm(10 << 20) // 10 MB
-	if err != nil {
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
 		http.Error(w, "Invalid form data", http.StatusBadRequest)
 		return
 	}
 
 	name := r.FormValue("name")
 	description := r.FormValue("description")
-	priceStr := r.FormValue("price")
+	priceStr := r.FormValue("price_cents")
 	categories := r.Form["categories"]
 	ingredients := r.Form["ingredients"]
 	tags := r.Form["tags"]
@@ -273,19 +298,28 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	price, err := strconv.ParseFloat(priceStr, 64)
-	if err != nil {
+	priceCents, err := strconv.Atoi(priceStr)
+	if err != nil || priceCents < 0 {
 		http.Error(w, "Invalid price", http.StatusBadRequest)
 		return
 	}
 
-	imageURL := r.FormValue("currentImage") // Use current image unless new one is uploaded
+	var imageURL string
+	err = h.DB.QueryRow(r.Context(), `SELECT image FROM speisekarte WHERE id = $1`, id).Scan(&imageURL)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			http.Error(w, "Item not found", http.StatusNotFound)
+			return
+		}
+		log.Printf("Failed to fetch existing item: %v", err)
+		http.Error(w, "Failed to fetch item", http.StatusInternalServerError)
+		return
+	}
 
 	file, handler, err := r.FormFile("image")
 	if err == nil && file != nil {
 		defer file.Close()
-
-		uploadedURL, uploadErr := internal.UploadToSupabase(file, handler)
+		uploadedURL, uploadErr := internal.UploadToSupabase(r.Context(), file, handler)
 		if uploadErr != nil {
 			log.Printf("Image upload failed: %v", uploadErr)
 			http.Error(w, "Image upload failed", http.StatusInternalServerError)
@@ -298,23 +332,24 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		UPDATE speisekarte
 		SET name = $1,
 			description = $2,
-			price = $3,
+			price_cents = $3,
 			categories = $4,
 			ingredients = $5,
 			tags = $6,
 			image = $7,
-			seasonal = $8
+			seasonal = $8,
+			updated_at = NOW()
 		WHERE id = $9
-		RETURNING id;
+		RETURNING id
 	`
 
 	var returnedID string
 	err = h.DB.QueryRow(
-		context.Background(),
+		r.Context(),
 		query,
 		name,
 		description,
-		price,
+		priceCents,
 		categories,
 		ingredients,
 		tags,
@@ -322,7 +357,6 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 		seasonal,
 		id,
 	).Scan(&returnedID)
-
 	if err != nil {
 		if pgErr, ok := err.(*pgconn.PgError); ok && pgErr.Code == "23505" {
 			http.Error(w, "Item with this name already exists", http.StatusConflict)
@@ -334,7 +368,6 @@ func (h *SpeisekarteHandler) UpdateItem(w http.ResponseWriter, r *http.Request) 
 	}
 
 	invalidateCache()
-	
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -346,8 +379,7 @@ func (h *SpeisekarteHandler) DeleteItem(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	cmdTag, err := h.DB.Exec(context.Background(),
-		`DELETE FROM speisekarte WHERE id = $1`, id)
+	cmdTag, err := h.DB.Exec(r.Context(), `DELETE FROM speisekarte WHERE id = $1`, id)
 	if err != nil {
 		log.Printf("Failed to delete item: %v", err)
 		http.Error(w, "Failed to delete item", http.StatusInternalServerError)
@@ -360,6 +392,5 @@ func (h *SpeisekarteHandler) DeleteItem(w http.ResponseWriter, r *http.Request) 
 	}
 
 	invalidateCache()
-
 	w.WriteHeader(http.StatusOK)
 }
